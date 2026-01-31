@@ -129,7 +129,6 @@ fi
 SKIP_DOWNLOAD=0
 if [[ -n "$CURRENT_VERSION" && -n "$LATEST_VERSION" && "$CURRENT_VERSION" == "$LATEST_VERSION" && "$CURRENT_BIN_IS_DEST" == "1" ]]; then
   SKIP_DOWNLOAD=1
-  echo "codex-max is already latest ($CURRENT_VERSION). Skipping download."
 fi
 
 if [[ "$SKIP_DOWNLOAD" != "1" ]]; then
@@ -186,24 +185,79 @@ PY
   install -m 0755 "$BIN_PATH" "$BIN_DEST"
 fi
 
+hash_file() {
+  local file="$1"
+
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$file" | awk '{print $NF}'
+  elif command -v cksum >/dev/null 2>&1; then
+    cksum "$file" | awk '{print $1}'
+  else
+    return 1
+  fi
+}
+
 install_wrapper() {
   local dest="$1"
   local script_dir=""
   local local_wrapper=""
+  local src_hash=""
+  local dest_hash=""
+  local tmp=""
 
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   local_wrapper="$script_dir/cx"
 
   mkdir -p "$(dirname "$dest")"
   if [[ -f "$local_wrapper" ]]; then
+    src_hash="$(hash_file "$local_wrapper" || true)"
+    if [[ -f "$dest" ]]; then
+      dest_hash="$(hash_file "$dest" || true)"
+      if [[ -n "$src_hash" && "$src_hash" == "$dest_hash" ]]; then
+        if [[ ! -x "$dest" ]]; then
+          chmod +x "$dest" || return 1
+        fi
+        return 0
+      fi
+    fi
     cp "$local_wrapper" "$dest" || return 1
   else
-    curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/cx" -o "$dest" || return 1
+    tmp="$(mktemp)"
+    if ! curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/cx" -o "$tmp"; then
+      rm -f "$tmp"
+      return 1
+    fi
+    src_hash="$(hash_file "$tmp" || true)"
+    if [[ -f "$dest" ]]; then
+      dest_hash="$(hash_file "$dest" || true)"
+      if [[ -n "$src_hash" && "$src_hash" == "$dest_hash" ]]; then
+        rm -f "$tmp"
+        if [[ ! -x "$dest" ]]; then
+          chmod +x "$dest" || return 1
+        fi
+        return 0
+      fi
+    fi
+    cp "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+    rm -f "$tmp"
   fi
   chmod +x "$dest" || return 1
+  return 2
 }
 
-if ! install_wrapper "$WRAPPER_DEST"; then
+WRAPPER_UPDATED=0
+set +e
+install_wrapper "$WRAPPER_DEST"
+WRAPPER_STATUS=$?
+set -e
+
+if [[ "$WRAPPER_STATUS" -eq 2 ]]; then
+  WRAPPER_UPDATED=1
+elif [[ "$WRAPPER_STATUS" -ne 0 ]]; then
   if [[ ! -x "$WRAPPER_DEST" ]]; then
     echo "Failed to install wrapper to $WRAPPER_DEST" >&2
     exit 1
@@ -213,4 +267,6 @@ fi
 if [[ "$SKIP_DOWNLOAD" != "1" ]]; then
   echo "Installed codex-max binary to $BIN_DEST"
 fi
-echo "Installed cx wrapper to $WRAPPER_DEST"
+if [[ "$WRAPPER_UPDATED" == "1" ]]; then
+  echo "Installed cx wrapper to $WRAPPER_DEST"
+fi
