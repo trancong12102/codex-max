@@ -2,7 +2,7 @@ name: Build Codex CLI (alpha)
 
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: codex-alpha-release
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
