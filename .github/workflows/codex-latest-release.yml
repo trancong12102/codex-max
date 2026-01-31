@@ -1,4 +1,4 @@
-name: Build Codex CLI (alpha)
+name: Build Codex CLI (latest upstream)
 
 on:
   schedule:
@@ -8,13 +8,12 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: codex-alpha-release
-  cancel-in-progress: true
-
 jobs:
   build:
     runs-on: macos-latest
+    concurrency:
+      group: codex-release-latest
+      cancel-in-progress: true
     env:
       UPSTREAM_REPO: openai/codex
       RELEASE_PREFIX: codex-
@@ -23,19 +22,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Resolve latest alpha release tag
+      - name: Resolve latest upstream release tag
         id: upstream
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           releases="$(gh api --paginate -H "Accept: application/vnd.github+json" "/repos/${UPSTREAM_REPO}/releases?per_page=100")"
-          latest="$(echo "$releases" | jq -r '[.[] | select(.tag_name != null and (.tag_name | test("alpha"; "i")))] | sort_by(.published_at // .created_at // .tag_name) | last | .tag_name')"
-          if [ -z "$latest" ] || [ "$latest" = "null" ]; then
-            echo "No alpha releases found for $UPSTREAM_REPO" >&2
+          latest_json="$(echo "$releases" | jq -r '[.[] | select(.tag_name != null and (.draft == false))] | sort_by(.published_at // .created_at // .tag_name) | last')"
+          if [ -z "$latest_json" ] || [ "$latest_json" = "null" ]; then
+            echo "No releases found for $UPSTREAM_REPO" >&2
             exit 1
           fi
-          echo "tag=$latest" >> "$GITHUB_OUTPUT"
+          tag="$(echo "$latest_json" | jq -r '.tag_name')"
+          prerelease="$(echo "$latest_json" | jq -r '.prerelease // false')"
+          if [ -z "$tag" ] || [ "$tag" = "null" ]; then
+            echo "Latest release tag missing for $UPSTREAM_REPO" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
       - name: Check if release already exists
         id: existing
@@ -55,7 +61,7 @@ jobs:
         if: steps.existing.outputs.exists == 'true'
         run: echo "Release ${{ steps.existing.outputs.release_tag }} already exists; skipping."
 
-      - name: Clone upstream at alpha tag
+      - name: Clone upstream at tag
         if: steps.existing.outputs.exists == 'false'
         run: |
           set -euo pipefail
@@ -145,13 +151,18 @@ jobs:
         run: |
           set -euo pipefail
           release_tag="${{ steps.existing.outputs.release_tag }}"
+          prerelease_flag=""
+          if [ "${{ steps.upstream.outputs.prerelease }}" = "true" ]; then
+            prerelease_flag="--prerelease"
+          fi
           cat > release-notes.txt <<EOF
           Built from \`${UPSTREAM_REPO}\` tag \`${{ steps.upstream.outputs.tag }}\`.
           Applied reasoning_effort preset patch (Plan/Pair Programming/Execute -> XHigh).
+          Upstream prerelease: \`${{ steps.upstream.outputs.prerelease }}\`.
           Artifact target: \`${BUILD_TARGET}\`.
           EOF
           gh release create "$release_tag" dist/*.tar.gz dist/*.sha256 \
-            --title "Codex ${{ steps.upstream.outputs.tag }} (alpha, patched)" \
+            --title "Codex ${{ steps.upstream.outputs.tag }} (patched)" \
             --notes-file release-notes.txt \
-            --prerelease \
+            ${prerelease_flag} \
             --target "${GITHUB_SHA}"

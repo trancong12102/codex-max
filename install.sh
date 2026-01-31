@@ -21,8 +21,7 @@ import urllib.request
 import urllib.error
 
 repo = "trancong12102/codex-max"
-latest_api = f"https://api.github.com/repos/{repo}/releases/latest"
-releases_api = f"https://api.github.com/repos/{repo}/releases?per_page=1"
+releases_api = f"https://api.github.com/repos/{repo}/releases?per_page=100"
 
 def fetch_json(url: str):
     req = urllib.request.Request(
@@ -38,17 +37,29 @@ def fetch_json(url: str):
     except urllib.error.HTTPError as e:
         return e.code, None
 
-status, data = fetch_json(latest_api)
-if status != 200 or not data:
-    status, data = fetch_json(releases_api)
-    if status == 200 and isinstance(data, list) and data:
-        data = data[0]
-    else:
-        print("\t", end="")
-        sys.exit(0)
+status, data = fetch_json(releases_api)
+if status != 200 or not isinstance(data, list) or not data:
+    print("\t", end="")
+    sys.exit(0)
 
-tag = str(data.get("tag_name", ""))
-assets = data.get("assets", [])
+def sort_key(item):
+    return item.get("published_at") or item.get("created_at") or item.get("tag_name") or ""
+
+filtered = []
+for item in data:
+    tag = str(item.get("tag_name", ""))
+    if not tag:
+        continue
+    if item.get("draft") is False:
+        filtered.append(item)
+
+if not filtered:
+    print("\t", end="")
+    sys.exit(0)
+
+selected = sorted(filtered, key=sort_key)[-1]
+tag = str(selected.get("tag_name", ""))
+assets = selected.get("assets", [])
 if not assets:
     print(f"\t{tag}", end="")
     sys.exit(0)

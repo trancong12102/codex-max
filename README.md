@@ -2,11 +2,11 @@
 
 Patched Codex CLI builds with higher reasoning presets, published as GitHub releases and installable via a single script.
 
-This repo tracks the latest **alpha** releases of `openai/codex`, applies a patch that sets the collaboration-mode reasoning presets to `XHigh`, then publishes a patched binary for Apple Silicon macOS.
+This repo tracks the latest release of `openai/codex` (alpha or stable), applies a patch that sets the collaboration-mode reasoning presets to `XHigh`, then publishes a patched binary for Apple Silicon macOS.
 
 ## What this changes
 
-- Upstream: `openai/codex` alpha releases
+- Upstream: `openai/codex` latest release (alpha or stable)
 - Patch: `reasoning_effort` presets for Plan / Pair Programming / Execute set to `XHigh`
 - Target: `aarch64-apple-darwin` (Apple Silicon macOS)
 
@@ -14,7 +14,7 @@ This repo tracks the latest **alpha** releases of `openai/codex`, applies a patc
 
 Use the installer script included in this repo. It will:
 
-- Query the latest GitHub release
+- Query the latest GitHub release (alpha or stable, whichever is newest)
 - Compare against your installed codex-max binary version
 - Download only if you are not already on the latest release
 - Install the wrapper to `~/.local/bin/cx` (default)
@@ -60,5 +60,5 @@ cx --version
 
 ## Notes
 
-- Releases are tagged as `codex-<upstream_tag>` and marked as prerelease.
+- Releases are tagged as `codex-<upstream_tag>` and mirror the upstream release type (prerelease vs stable).
 - Only Apple Silicon macOS artifacts are produced by the current workflow.
