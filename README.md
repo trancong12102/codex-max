@@ -21,25 +21,25 @@ Use the installer script included in this repo. It will:
 - Install the patched binary to `~/.local/bin/codex-max` (default)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/trancong12102/codex-max/main/install-codex.sh | bash
+curl -fsSL https://raw.githubusercontent.com/trancong12102/codex-max/main/install.sh | bash
 ```
 
 If you already cloned this repo, you can run it locally:
 
 ```bash
-./install-codex.sh
+./install.sh
 ```
 
 Optional: override the installed binary path.
 
 ```bash
-BIN_DEST="$HOME/bin/codex-max" ./install-codex.sh
+BIN_DEST="$HOME/bin/codex-max" ./install.sh
 ```
 
 Optional: override the wrapper path.
 
 ```bash
-WRAPPER_DEST="$HOME/bin/cx" ./install-codex.sh
+WRAPPER_DEST="$HOME/bin/cx" ./install.sh
 ```
 
 If `~/.local/bin` is not on your `PATH`, add it (e.g. in `~/.zshrc`):
