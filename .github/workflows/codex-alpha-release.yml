@@ -1,0 +1,145 @@
+name: Build Codex CLI (alpha)
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: codex-alpha-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      UPSTREAM_REPO: openai/codex
+      RELEASE_PREFIX: codex-
+      BUILD_TARGET: aarch64-apple-darwin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve latest alpha release tag
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          releases="$(gh api --paginate -H "Accept: application/vnd.github+json" "/repos/${UPSTREAM_REPO}/releases?per_page=100")"
+          latest="$(echo "$releases" | jq -r '[.[] | select(.tag_name != null and (.tag_name | test("alpha"; "i")))] | sort_by(.published_at // .created_at // .tag_name) | last | .tag_name')"
+          if [ -z "$latest" ] || [ "$latest" = "null" ]; then
+            echo "No alpha releases found for $UPSTREAM_REPO" >&2
+            exit 1
+          fi
+          echo "tag=$latest" >> "$GITHUB_OUTPUT"
+
+      - name: Check if release already exists
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          release_tag="${RELEASE_PREFIX}${{ steps.upstream.outputs.tag }}"
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Stop early if release exists
+        if: steps.existing.outputs.exists == 'true'
+        run: echo "Release ${{ steps.existing.outputs.release_tag }} already exists; skipping."
+
+      - name: Clone upstream at alpha tag
+        if: steps.existing.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "${{ steps.upstream.outputs.tag }}" "https://github.com/${UPSTREAM_REPO}.git" codex-src
+
+      - name: Patch reasoning_effort presets
+        if: steps.existing.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          file="$(find codex-src -path "*/codex-rs/core/src/models_manager/collaboration_mode_presets.rs" -print -quit)"
+          if [ -z "$file" ]; then
+            echo "collaboration_mode_presets.rs not found" >&2
+            exit 1
+          fi
+          export FILE_PATH="$file"
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          path = Path(os.environ["FILE_PATH"])
+          text = path.read_text()
+          replacements = {
+              "reasoning_effort: Some(Some(ReasoningEffort::Medium))": "reasoning_effort: Some(Some(ReasoningEffort::XHigh))",
+              "reasoning_effort: Some(Some(ReasoningEffort::High))": "reasoning_effort: Some(Some(ReasoningEffort::XHigh))",
+          }
+          updated = text
+          applied = 0
+          for old, new in replacements.items():
+              if old in updated:
+                  updated = updated.replace(old, new)
+                  applied += 1
+          if updated == text or applied == 0:
+              raise SystemExit("Expected reasoning_effort presets not found; refusing to continue.")
+          path.write_text(updated)
+          print(f"Patched {path}")
+          PY
+
+      - name: Install Rust toolchain
+        if: steps.existing.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build codex CLI
+        if: steps.existing.outputs.exists == 'false'
+        working-directory: codex-src/codex-rs
+        run: |
+          set -euo pipefail
+          source "$HOME/.cargo/env"
+          rustup target add "$BUILD_TARGET"
+          cargo build --release --locked --bin codex --target "$BUILD_TARGET"
+
+      - name: Package artifact
+        if: steps.existing.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          bin_path="codex-src/codex-rs/target/${BUILD_TARGET}/release/codex"
+          if [ ! -f "$bin_path" ]; then
+            echo "codex binary not found at $bin_path" >&2
+            exit 1
+          fi
+          mkdir -p dist
+          artifact_name="codex-${BUILD_TARGET}"
+          cp "$bin_path" "dist/${artifact_name}"
+          tarball="codex-${{ steps.upstream.outputs.tag }}-${BUILD_TARGET}.tar.gz"
+          tar -czf "dist/${tarball}" -C dist "${artifact_name}"
+          (cd dist && sha256sum "${tarball}" > "${tarball}.sha256")
+
+      - name: Create GitHub release
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          release_tag="${{ steps.existing.outputs.release_tag }}"
+          cat > release-notes.txt <<EOF
+          Built from \`${UPSTREAM_REPO}\` tag \`${{ steps.upstream.outputs.tag }}\`.
+          Applied reasoning_effort preset patch (Plan/Pair Programming/Execute -> XHigh).
+          Artifact target: \`${BUILD_TARGET}\`.
+          EOF
+          gh release create "$release_tag" dist/*.tar.gz dist/*.sha256 \
+            --title "Codex ${{ steps.upstream.outputs.tag }} (alpha, patched)" \
+            --notes-file release-notes.txt \
+            --prerelease \
+            --target "${GITHUB_SHA}"
