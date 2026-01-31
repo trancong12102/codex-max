@@ -108,7 +108,7 @@ jobs:
           set -euo pipefail
           source "$HOME/.cargo/env"
           rustup target add "$BUILD_TARGET"
-          cargo build --release --locked --bin codex --target "$BUILD_TARGET"
+          cargo build --release --bin codex --target "$BUILD_TARGET"
 
       - name: Package artifact
         if: steps.existing.outputs.exists == 'false'
