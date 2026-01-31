@@ -92,6 +92,18 @@ jobs:
           print(f"Patched {path}")
           PY
 
+      - name: Cache Rust build artifacts
+        if: steps.existing.outputs.exists == 'false'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            codex-src/codex-rs/target
+          key: ${{ runner.os }}-cargo-${{ env.BUILD_TARGET }}-${{ hashFiles('codex-src/codex-rs/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ env.BUILD_TARGET }}-
+
       - name: Install Rust toolchain
         if: steps.existing.outputs.exists == 'false'
         run: |
