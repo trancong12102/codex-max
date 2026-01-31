@@ -15,9 +15,10 @@ This repo tracks the latest **alpha** releases of `openai/codex`, applies a patc
 Use the installer script included in this repo. It will:
 
 - Query the latest GitHub release
-- Compare against your installed `codex` version
+- Compare against your installed codex-max binary version
 - Download only if you are not already on the latest release
-- Extract and install to `~/.local/bin/codex` (default)
+- Install the wrapper to `~/.local/bin/cx` (default)
+- Install the patched binary to `~/.local/bin/codex-max` (default)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/trancong12102/codex-max/main/install-codex.sh | bash
@@ -29,10 +30,16 @@ If you already cloned this repo, you can run it locally:
 ./install-codex.sh
 ```
 
-Optional: override the destination path.
+Optional: override the installed binary path.
 
 ```bash
-DEST="$HOME/bin/codex" ./install-codex.sh
+BIN_DEST="$HOME/bin/codex-max" ./install-codex.sh
+```
+
+Optional: override the wrapper path.
+
+```bash
+WRAPPER_DEST="$HOME/bin/cx" ./install-codex.sh
 ```
 
 If `~/.local/bin` is not on your `PATH`, add it (e.g. in `~/.zshrc`):
@@ -41,10 +48,14 @@ If `~/.local/bin` is not on your `PATH`, add it (e.g. in `~/.zshrc`):
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+## Wrapper (auto-update on run)
+
+The installed `cx` wrapper checks for the latest codex-max release on each run, installs it to the configured binary path, then forwards all arguments to the patched CLI.
+
 ## Verify
 
 ```bash
-codex --version
+cx --version
 ```
 
 ## Notes

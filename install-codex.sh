@@ -2,7 +2,11 @@
 set -euo pipefail
 
 REPO="trancong12102/codex-max"
-DEST="${DEST:-$HOME/.local/bin/codex}"
+BIN_DEST_DEFAULT="$HOME/.local/bin/codex-max"
+WRAPPER_DEST_DEFAULT="$HOME/.local/bin/cx"
+BIN_DEST="${BIN_DEST:-${CODEX_MAX_BIN_DEST:-${DEST:-$BIN_DEST_DEFAULT}}}"
+WRAPPER_DEST="${WRAPPER_DEST:-${CODEX_MAX_WRAPPER_DEST:-$WRAPPER_DEST_DEFAULT}}"
+ALLOW_PATH_FALLBACK="${ALLOW_PATH_FALLBACK:-1}"
 
 TMP_DIR="$(mktemp -d)"
 cleanup() { rm -rf "$TMP_DIR"; }
@@ -110,71 +114,103 @@ fi
 LATEST_VERSION="$(echo "$LATEST_TAG" | sed -E 's/^[^0-9]*//')"
 CURRENT_VERSION=""
 CURRENT_BIN=""
-if [[ -x "$DEST" ]]; then
-  CURRENT_BIN="$DEST"
-elif command -v codex >/dev/null 2>&1; then
-  CURRENT_BIN="$(command -v codex)"
+CURRENT_BIN_IS_DEST=0
+if [[ -x "$BIN_DEST" ]]; then
+  CURRENT_BIN="$BIN_DEST"
+  CURRENT_BIN_IS_DEST=1
+elif [[ "$ALLOW_PATH_FALLBACK" == "1" ]] && command -v codex-max >/dev/null 2>&1; then
+  CURRENT_BIN="$(command -v codex-max)"
 fi
 if [[ -n "$CURRENT_BIN" ]]; then
   VERSION_OUTPUT="$("$CURRENT_BIN" --version 2>/dev/null || true)"
   CURRENT_VERSION="$(echo "$VERSION_OUTPUT" | grep -Eo '[0-9]+([.][0-9]+)+([.-][0-9A-Za-z.-]+)?' | head -n 1 || true)"
 fi
 
-if [[ -n "$CURRENT_VERSION" && -n "$LATEST_VERSION" && "$CURRENT_VERSION" == "$LATEST_VERSION" ]]; then
-  echo "codex is already latest ($CURRENT_VERSION). Skipping download."
-  exit 0
+SKIP_DOWNLOAD=0
+if [[ -n "$CURRENT_VERSION" && -n "$LATEST_VERSION" && "$CURRENT_VERSION" == "$LATEST_VERSION" && "$CURRENT_BIN_IS_DEST" == "1" ]]; then
+  SKIP_DOWNLOAD=1
+  echo "codex-max is already latest ($CURRENT_VERSION). Skipping download."
 fi
 
-ARCHIVE="$TMP_DIR/${ASSET_NAME:-codex-asset}"
-curl -fL "$ASSET_URL" -o "$ARCHIVE"
+if [[ "$SKIP_DOWNLOAD" != "1" ]]; then
+  ARCHIVE="$TMP_DIR/${ASSET_NAME:-codex-asset}"
+  curl -fL "$ASSET_URL" -o "$ARCHIVE"
 
-extract_archive() {
-  local archive="$1"
-  local dest="$2"
-  case "$archive" in
-    *.tar.gz|*.tgz)
-      tar -xzf "$archive" -C "$dest"
-      ;;
-    *.tar.xz|*.txz)
-      tar -xJf "$archive" -C "$dest"
-      ;;
-    *.tar)
-      tar -xf "$archive" -C "$dest"
-      ;;
-    *.zip)
-      python3 - <<'PY' "$archive" "$dest"
+  extract_archive() {
+    local archive="$1"
+    local dest="$2"
+    case "$archive" in
+      *.tar.gz|*.tgz)
+        tar -xzf "$archive" -C "$dest"
+        ;;
+      *.tar.xz|*.txz)
+        tar -xJf "$archive" -C "$dest"
+        ;;
+      *.tar)
+        tar -xf "$archive" -C "$dest"
+        ;;
+      *.zip)
+        python3 - <<'PY' "$archive" "$dest"
 import sys, zipfile
 archive, dest = sys.argv[1], sys.argv[2]
 with zipfile.ZipFile(archive) as zf:
     zf.extractall(dest)
 PY
-      ;;
-    *)
-      # Assume direct binary download.
-      mkdir -p "$dest"
-      cp "$archive" "$dest/"
-      ;;
-  esac
+        ;;
+      *)
+        # Assume direct binary download.
+        mkdir -p "$dest"
+        cp "$archive" "$dest/"
+        ;;
+    esac
+  }
+
+  extract_archive "$ARCHIVE" "$TMP_DIR"
+
+  BIN_PATH="$(find "$TMP_DIR" -maxdepth 6 -type f -name codex | head -n 1)"
+  if [[ -z "$BIN_PATH" ]]; then
+    BIN_PATH="$(find "$TMP_DIR" -maxdepth 6 -type f -name 'codex*' ! -name '*.dSYM' | head -n 1)"
+  fi
+  if [[ -z "$BIN_PATH" ]]; then
+    BIN_PATH="$(find "$TMP_DIR" -maxdepth 6 -type f -perm -u+x | head -n 1)"
+  fi
+  if [[ -z "$BIN_PATH" ]]; then
+    echo "codex binary not found in the downloaded archive." >&2
+    exit 1
+  fi
+  if [[ ! -x "$BIN_PATH" ]]; then
+    chmod +x "$BIN_PATH"
+  fi
+
+  mkdir -p "$(dirname "$BIN_DEST")"
+  install -m 0755 "$BIN_PATH" "$BIN_DEST"
+fi
+
+install_wrapper() {
+  local dest="$1"
+  local script_dir=""
+  local local_wrapper=""
+
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local_wrapper="$script_dir/cx"
+
+  mkdir -p "$(dirname "$dest")"
+  if [[ -f "$local_wrapper" ]]; then
+    cp "$local_wrapper" "$dest" || return 1
+  else
+    curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/cx" -o "$dest" || return 1
+  fi
+  chmod +x "$dest" || return 1
 }
 
-extract_archive "$ARCHIVE" "$TMP_DIR"
-
-BIN_PATH="$(find "$TMP_DIR" -maxdepth 6 -type f -name codex | head -n 1)"
-if [[ -z "$BIN_PATH" ]]; then
-  BIN_PATH="$(find "$TMP_DIR" -maxdepth 6 -type f -name 'codex*' ! -name '*.dSYM' | head -n 1)"
-fi
-if [[ -z "$BIN_PATH" ]]; then
-  BIN_PATH="$(find "$TMP_DIR" -maxdepth 6 -type f -perm -u+x | head -n 1)"
-fi
-if [[ -z "$BIN_PATH" ]]; then
-  echo "codex binary not found in the downloaded archive." >&2
-  exit 1
-fi
-if [[ ! -x "$BIN_PATH" ]]; then
-  chmod +x "$BIN_PATH"
+if ! install_wrapper "$WRAPPER_DEST"; then
+  if [[ ! -x "$WRAPPER_DEST" ]]; then
+    echo "Failed to install wrapper to $WRAPPER_DEST" >&2
+    exit 1
+  fi
 fi
 
-mkdir -p "$(dirname "$DEST")"
-install -m 0755 "$BIN_PATH" "$DEST"
-
-echo "Installed codex to $DEST"
+if [[ "$SKIP_DOWNLOAD" != "1" ]]; then
+  echo "Installed codex-max binary to $BIN_DEST"
+fi
+echo "Installed cx wrapper to $WRAPPER_DEST"

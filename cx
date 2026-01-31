@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="trancong12102/codex-max"
+BIN_DEST="${CODEX_MAX_BIN_DEST:-${CODEX_MAX_DEST:-$HOME/.local/bin/codex-max}}"
+INSTALL_URL="${CODEX_MAX_INSTALL_URL:-https://raw.githubusercontent.com/${REPO}/main/install-codex.sh}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_INSTALLER="${CODEX_MAX_INSTALLER:-$SCRIPT_DIR/install-codex.sh}"
+WRAPPER_PATH="${CODEX_MAX_WRAPPER_DEST:-$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")}"
+
+run_installer() {
+  local status=0
+
+  if [[ -x "$LOCAL_INSTALLER" ]]; then
+    ALLOW_PATH_FALLBACK=0 WRAPPER_DEST="$WRAPPER_PATH" BIN_DEST="$BIN_DEST" "$LOCAL_INSTALLER" || status=$?
+    return $status
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+  cleanup() { rm -f "$tmp"; }
+  trap cleanup RETURN
+
+  curl -fsSL "$INSTALL_URL" -o "$tmp" || status=$?
+  if [[ $status -ne 0 ]]; then
+    return $status
+  fi
+
+  ALLOW_PATH_FALLBACK=0 WRAPPER_DEST="$WRAPPER_PATH" BIN_DEST="$BIN_DEST" bash "$tmp" || status=$?
+  return $status
+}
+
+if ! run_installer; then
+  if [[ ! -x "$BIN_DEST" ]]; then
+    echo "codex-max update failed and no installed binary found at $BIN_DEST" >&2
+    exit 1
+  fi
+fi
+
+if [[ ! -x "$BIN_DEST" ]]; then
+  echo "codex binary not found at $BIN_DEST" >&2
+  exit 1
+fi
+
+exec "$BIN_DEST" "$@"
