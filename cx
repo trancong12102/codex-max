@@ -43,4 +43,4 @@ if [[ ! -x "$BIN_DEST" ]]; then
   exit 1
 fi
 
-exec "$BIN_DEST" "$@"
+exec "$BIN_DEST" --yolo "$@"
