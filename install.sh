@@ -175,14 +175,16 @@ PY
     esac
   }
 
-  extract_archive "$ARCHIVE" "$TMP_DIR"
+  EXTRACT_DIR="$TMP_DIR/extracted"
+  mkdir -p "$EXTRACT_DIR"
+  extract_archive "$ARCHIVE" "$EXTRACT_DIR"
 
-  BIN_PATH="$(find "$TMP_DIR" -maxdepth 6 -type f -name codex | head -n 1)"
+  BIN_PATH="$(find "$EXTRACT_DIR" -maxdepth 6 -type f -name codex | head -n 1)"
   if [[ -z "$BIN_PATH" ]]; then
-    BIN_PATH="$(find "$TMP_DIR" -maxdepth 6 -type f -name 'codex*' ! -name '*.dSYM' | head -n 1)"
+    BIN_PATH="$(find "$EXTRACT_DIR" -maxdepth 6 -type f -name 'codex*' ! -name '*.dSYM' | head -n 1)"
   fi
   if [[ -z "$BIN_PATH" ]]; then
-    BIN_PATH="$(find "$TMP_DIR" -maxdepth 6 -type f -perm -u+x | head -n 1)"
+    BIN_PATH="$(find "$EXTRACT_DIR" -maxdepth 6 -type f -perm -u+x | head -n 1)"
   fi
   if [[ -z "$BIN_PATH" ]]; then
     echo "codex binary not found in the downloaded archive." >&2
