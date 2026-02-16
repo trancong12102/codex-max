@@ -67,35 +67,46 @@ jobs:
           set -euo pipefail
           git clone --depth 1 --branch "${{ steps.upstream.outputs.tag }}" "https://github.com/${UPSTREAM_REPO}.git" codex-src
 
-      - name: Patch reasoning_effort presets
+      - name: Patch reasoning_effort presets and max sub-agent threads
         if: steps.existing.outputs.exists == 'false'
         run: |
           set -euo pipefail
-          file="$(find codex-src -path "*/codex-rs/core/src/models_manager/collaboration_mode_presets.rs" -print -quit)"
-          if [ -z "$file" ]; then
+          presets_file="$(find codex-src -path "*/codex-rs/core/src/models_manager/collaboration_mode_presets.rs" -print -quit)"
+          if [ -z "$presets_file" ]; then
             echo "collaboration_mode_presets.rs not found" >&2
             exit 1
           fi
-          export FILE_PATH="$file"
+          config_file="$(find codex-src -path "*/codex-rs/core/src/config/mod.rs" -print -quit)"
+          if [ -z "$config_file" ]; then
+            echo "config/mod.rs not found" >&2
+            exit 1
+          fi
+          export PRESETS_FILE_PATH="$presets_file"
+          export CONFIG_FILE_PATH="$config_file"
           python - <<'PY'
           from pathlib import Path
           import os
-          path = Path(os.environ["FILE_PATH"])
-          text = path.read_text()
-          replacements = {
-              "reasoning_effort: Some(Some(ReasoningEffort::Medium))": "reasoning_effort: Some(Some(ReasoningEffort::XHigh))",
-              "reasoning_effort: Some(Some(ReasoningEffort::High))": "reasoning_effort: Some(Some(ReasoningEffort::XHigh))",
+          patch_targets = {
+              Path(os.environ["PRESETS_FILE_PATH"]): {
+                  "reasoning_effort: Some(Some(ReasoningEffort::Medium))": "reasoning_effort: Some(Some(ReasoningEffort::XHigh))",
+                  "reasoning_effort: Some(Some(ReasoningEffort::High))": "reasoning_effort: Some(Some(ReasoningEffort::XHigh))",
+              },
+              Path(os.environ["CONFIG_FILE_PATH"]): {
+                  "DEFAULT_AGENT_MAX_THREADS: Option<usize> = Some(6);": "DEFAULT_AGENT_MAX_THREADS: Option<usize> = Some(12);",
+              },
           }
-          updated = text
-          applied = 0
-          for old, new in replacements.items():
-              if old in updated:
-                  updated = updated.replace(old, new)
-                  applied += 1
-          if updated == text or applied == 0:
-              raise SystemExit("Expected reasoning_effort presets not found; refusing to continue.")
-          path.write_text(updated)
-          print(f"Patched {path}")
+          for path, replacements in patch_targets.items():
+              text = path.read_text()
+              updated = text
+              applied = 0
+              for old, new in replacements.items():
+                  if old in updated:
+                      updated = updated.replace(old, new)
+                      applied += 1
+              if updated == text or applied == 0:
+                  raise SystemExit(f"Expected patch targets not found in {path}; refusing to continue.")
+              path.write_text(updated)
+              print(f"Patched {path}")
           PY
 
       - name: Cache cargo build
@@ -160,6 +171,7 @@ jobs:
           cat > release-notes.txt <<EOF
           Built from \`${UPSTREAM_REPO}\` tag \`${{ steps.upstream.outputs.tag }}\`.
           Applied reasoning_effort preset patch (Plan/Pair Programming/Execute -> XHigh).
+          Raised default sub-agent thread limit (\`agents.max_threads\`) from 6 to 12.
           Upstream prerelease: \`${{ steps.upstream.outputs.prerelease }}\`.
           Artifact target: \`${BUILD_TARGET}\`.
           EOF
