@@ -67,7 +67,7 @@ jobs:
           set -euo pipefail
           git clone --depth 1 --branch "${{ steps.upstream.outputs.tag }}" "https://github.com/${UPSTREAM_REPO}.git" codex-src
 
-      - name: Patch reasoning_effort presets and max sub-agent threads
+      - name: Patch model/effort defaults and max sub-agent threads
         if: steps.existing.outputs.exists == 'false'
         run: |
           set -euo pipefail
@@ -76,37 +76,111 @@ jobs:
             echo "collaboration_mode_presets.rs not found" >&2
             exit 1
           fi
+          explorer_config_file="$(find codex-src -path "*/codex-rs/core/src/agent/builtins/explorer.toml" -print -quit)"
+          if [ -z "$explorer_config_file" ]; then
+            echo "agent/builtins/explorer.toml not found" >&2
+            exit 1
+          fi
           config_file="$(find codex-src -path "*/codex-rs/core/src/config/mod.rs" -print -quit)"
           if [ -z "$config_file" ]; then
             echo "config/mod.rs not found" >&2
             exit 1
           fi
           export PRESETS_FILE_PATH="$presets_file"
+          export EXPLORER_CONFIG_FILE_PATH="$explorer_config_file"
           export CONFIG_FILE_PATH="$config_file"
           python - <<'PY'
           from pathlib import Path
           import os
-          patch_targets = {
-              Path(os.environ["PRESETS_FILE_PATH"]): {
-                  "reasoning_effort: Some(Some(ReasoningEffort::Medium))": "reasoning_effort: Some(Some(ReasoningEffort::XHigh))",
-                  "reasoning_effort: Some(Some(ReasoningEffort::High))": "reasoning_effort: Some(Some(ReasoningEffort::XHigh))",
-              },
-              Path(os.environ["CONFIG_FILE_PATH"]): {
-                  "DEFAULT_AGENT_MAX_THREADS: Option<usize> = Some(6);": "DEFAULT_AGENT_MAX_THREADS: Option<usize> = Some(12);",
-              },
-          }
-          for path, replacements in patch_targets.items():
-              text = path.read_text()
-              updated = text
-              applied = 0
-              for old, new in replacements.items():
-                  if old in updated:
-                      updated = updated.replace(old, new)
-                      applied += 1
-              if updated == text or applied == 0:
-                  raise SystemExit(f"Expected patch targets not found in {path}; refusing to continue.")
-              path.write_text(updated)
-              print(f"Patched {path}")
+          import re
+
+          target_model = "gpt-5.3-codex"
+
+          presets_path = Path(os.environ["PRESETS_FILE_PATH"])
+          presets_text = presets_path.read_text()
+          presets_updated = presets_text
+
+          presets_updated, model_replacements = re.subn(
+              r'(?m)^(\s*)model:\s*(?:None|Some\(".*?"\.to_string\(\)\)),\s*$',
+              rf'\1model: Some("{target_model}".to_string()),',
+              presets_updated,
+          )
+          if model_replacements == 0:
+              raise SystemExit(f"Expected model preset target not found in {presets_path}; refusing to continue.")
+
+          presets_updated, reasoning_replacements = re.subn(
+              r'(?m)^(\s*)reasoning_effort:\s*(?:None|Some\(Some\(ReasoningEffort::[A-Za-z0-9_]+\)\)),\s*$',
+              r'\1reasoning_effort: Some(Some(ReasoningEffort::XHigh)),',
+              presets_updated,
+          )
+          if reasoning_replacements == 0:
+              raise SystemExit(f"Expected reasoning_effort preset target not found in {presets_path}; refusing to continue.")
+
+          # Optional forward-compat: if upstream introduces thinking_effort in this file,
+          # force it to XHigh as well.
+          presets_updated, thinking_replacements = re.subn(
+              r'(?m)^(\s*)thinking_effort:\s*Some\(Some\(([A-Za-z0-9_]+)::[A-Za-z0-9_]+\)\),\s*$',
+              r'\1thinking_effort: Some(Some(\2::XHigh)),',
+              presets_updated,
+          )
+          if presets_updated != presets_text:
+              presets_path.write_text(presets_updated)
+          print(
+              f"Patched {presets_path} "
+              f"(model: {model_replacements}, reasoning_effort: {reasoning_replacements}, "
+              f"thinking_effort: {thinking_replacements})"
+          )
+
+          explorer_path = Path(os.environ["EXPLORER_CONFIG_FILE_PATH"])
+          explorer_text = explorer_path.read_text()
+          explorer_updated = explorer_text
+
+          explorer_updated, explorer_model_replacements = re.subn(
+              r'(?m)^model\s*=\s*".*"$',
+              f'model = "{target_model}"',
+              explorer_updated,
+          )
+          if explorer_model_replacements == 0:
+              raise SystemExit(f"Expected model target not found in {explorer_path}; refusing to continue.")
+
+          explorer_updated, explorer_reasoning_replacements = re.subn(
+              r'(?m)^model_reasoning_effort\s*=\s*".*"$',
+              'model_reasoning_effort = "xhigh"',
+              explorer_updated,
+          )
+          if explorer_reasoning_replacements == 0:
+              raise SystemExit(f"Expected model_reasoning_effort target not found in {explorer_path}; refusing to continue.")
+
+          # Optional forward-compat for potential future naming.
+          explorer_updated, explorer_thinking_replacements = re.subn(
+              r'(?m)^model_thinking_effort\s*=\s*".*"$',
+              'model_thinking_effort = "xhigh"',
+              explorer_updated,
+          )
+          explorer_updated, explorer_thinking_replacements_alt = re.subn(
+              r'(?m)^thinking_effort\s*=\s*".*"$',
+              'thinking_effort = "xhigh"',
+              explorer_updated,
+          )
+
+          if explorer_updated != explorer_text:
+              explorer_path.write_text(explorer_updated)
+          print(
+              f"Patched {explorer_path} "
+              f"(model: {explorer_model_replacements}, reasoning_effort: {explorer_reasoning_replacements}, "
+              f"thinking_effort: {explorer_thinking_replacements + explorer_thinking_replacements_alt})"
+          )
+
+          config_path = Path(os.environ["CONFIG_FILE_PATH"])
+          config_text = config_path.read_text()
+          config_updated = config_text.replace(
+              "DEFAULT_AGENT_MAX_THREADS: Option<usize> = Some(6);",
+              "DEFAULT_AGENT_MAX_THREADS: Option<usize> = Some(12);",
+          )
+          if config_updated == config_text:
+              raise SystemExit(f"Expected patch targets not found in {config_path}; refusing to continue.")
+          config_path.write_text(config_updated)
+          print(f"Patched {config_path}")
           PY
 
       - name: Cache cargo build
@@ -170,7 +244,7 @@ jobs:
           fi
           cat > release-notes.txt <<EOF
           Built from \`${UPSTREAM_REPO}\` tag \`${{ steps.upstream.outputs.tag }}\`.
-          Applied reasoning_effort preset patch (Plan/Pair Programming/Execute -> XHigh).
+          Applied model + effort patch (model -> gpt-5.3-codex, thinking_effort/reasoning_effort -> xhigh where available).
           Raised default sub-agent thread limit (\`agents.max_threads\`) from 6 to 12.
           Upstream prerelease: \`${{ steps.upstream.outputs.prerelease }}\`.
           Artifact target: \`${BUILD_TARGET}\`.
