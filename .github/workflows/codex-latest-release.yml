@@ -135,39 +135,50 @@ jobs:
           explorer_text = explorer_path.read_text()
           explorer_updated = explorer_text
 
-          explorer_updated, explorer_model_replacements = re.subn(
-              r'(?m)^model\s*=\s*".*"$',
-              f'model = "{target_model}"',
-              explorer_updated,
-          )
-          if explorer_model_replacements == 0:
-              raise SystemExit(f"Expected model target not found in {explorer_path}; refusing to continue.")
+          def upsert_toml_string_key(text, key, value):
+              pattern = rf'(?m)^{re.escape(key)}\s*=\s*".*"$'
+              updated_text, replacements = re.subn(pattern, f'{key} = "{value}"', text)
+              insertions = 0
+              if replacements == 0:
+                  suffix = "" if updated_text.endswith("\n") or updated_text == "" else "\n"
+                  updated_text = f'{updated_text}{suffix}{key} = "{value}"\n'
+                  insertions = 1
+              return updated_text, replacements, insertions
 
-          explorer_updated, explorer_reasoning_replacements = re.subn(
-              r'(?m)^model_reasoning_effort\s*=\s*".*"$',
-              'model_reasoning_effort = "xhigh"',
+          explorer_updated, explorer_model_replacements, explorer_model_insertions = upsert_toml_string_key(
               explorer_updated,
+              "model",
+              target_model,
           )
-          if explorer_reasoning_replacements == 0:
-              raise SystemExit(f"Expected model_reasoning_effort target not found in {explorer_path}; refusing to continue.")
+
+          explorer_updated, explorer_reasoning_replacements, explorer_reasoning_insertions = upsert_toml_string_key(
+              explorer_updated,
+              "model_reasoning_effort",
+              "xhigh",
+          )
 
           # Optional forward-compat for potential future naming.
-          explorer_updated, explorer_thinking_replacements = re.subn(
-              r'(?m)^model_thinking_effort\s*=\s*".*"$',
-              'model_thinking_effort = "xhigh"',
-              explorer_updated,
-          )
-          explorer_updated, explorer_thinking_replacements_alt = re.subn(
-              r'(?m)^thinking_effort\s*=\s*".*"$',
-              'thinking_effort = "xhigh"',
-              explorer_updated,
-          )
+          explorer_thinking_replacements = 0
+          if re.search(r'(?m)^model_thinking_effort\s*=', explorer_updated):
+              explorer_updated, explorer_thinking_replacements = re.subn(
+                  r'(?m)^model_thinking_effort\s*=\s*".*"$',
+                  'model_thinking_effort = "xhigh"',
+                  explorer_updated,
+              )
+          explorer_thinking_replacements_alt = 0
+          if re.search(r'(?m)^thinking_effort\s*=', explorer_updated):
+              explorer_updated, explorer_thinking_replacements_alt = re.subn(
+                  r'(?m)^thinking_effort\s*=\s*".*"$',
+                  'thinking_effort = "xhigh"',
+                  explorer_updated,
+              )
 
           if explorer_updated != explorer_text:
               explorer_path.write_text(explorer_updated)
           print(
               f"Patched {explorer_path} "
-              f"(model: {explorer_model_replacements}, reasoning_effort: {explorer_reasoning_replacements}, "
+              f"(model: {explorer_model_replacements} replacements/{explorer_model_insertions} insertions, "
+              f"reasoning_effort: {explorer_reasoning_replacements} replacements/{explorer_reasoning_insertions} insertions, "
               f"thinking_effort: {explorer_thinking_replacements + explorer_thinking_replacements_alt})"
           )
 
